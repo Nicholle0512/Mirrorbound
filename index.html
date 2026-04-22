@@ -1,0 +1,877 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>mirrorbound</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@300;400&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #07070a;
+    --ash: #9a9aa0;
+    --hint: #5a5a62;
+  }
+  html, body {
+    margin: 0; height: 100%; background: var(--ink); overflow: hidden;
+    color: var(--ash); font-family: 'JetBrains Mono', monospace;
+    -webkit-font-smoothing: antialiased;
+  }
+  canvas { display: block; width: 100vw; height: 100vh; }
+ 
+  /* HUD */
+  .hud { position: fixed; inset: 0; pointer-events: none; user-select: none; }
+ 
+  .title {
+    position: absolute; left: 28px; bottom: 22px;
+    font-family: 'Instrument Serif', serif; font-style: italic;
+    font-size: 44px; line-height: 1; color: #e8e8ec;
+    letter-spacing: -0.01em;
+    text-shadow: 0 0 40px rgba(255,255,255,0.08);
+  }
+  .subtitle {
+    position: absolute; left: 30px; bottom: 6px;
+    font-size: 10px; letter-spacing: 0.22em; text-transform: uppercase;
+    color: var(--hint);
+  }
+ 
+  .controls {
+    position: absolute; right: 28px; bottom: 22px;
+    font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase;
+    color: var(--hint); text-align: right; line-height: 1.8;
+  }
+  .controls b { color: #c8c8ce; font-weight: 400; }
+  .controls .r { color: #5a5a62; }
+ 
+  /* resonance meter */
+  .meter-wrap {
+    position: absolute; top: 28px; left: 50%; transform: translateX(-50%);
+    width: 240px; display: flex; flex-direction: column; align-items: center;
+    gap: 8px; opacity: 0; transition: opacity 0.4s ease;
+  }
+  .meter-wrap.on { opacity: 1; }
+  .meter-label {
+    font-size: 9px; letter-spacing: 0.3em; text-transform: uppercase;
+    color: var(--hint);
+  }
+  .meter {
+    width: 100%; height: 1px; background: rgba(255,255,255,0.08);
+    position: relative; overflow: visible;
+  }
+  .meter-fill {
+    position: absolute; top: -1px; left: 0; height: 3px;
+    background: linear-gradient(90deg, #e8e8ec, #ffd8a8 60%, #ff9ec9);
+    box-shadow: 0 0 16px rgba(255,200,160,0.55);
+    width: 0%; transition: width 0.12s linear;
+  }
+ 
+  /* restoration banner */
+  .banner {
+    position: absolute; top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    font-family: 'Instrument Serif', serif; font-style: italic;
+    font-size: 72px; color: #fff; opacity: 0;
+    letter-spacing: -0.02em; text-align: center;
+    text-shadow: 0 0 60px rgba(255,220,190,0.4);
+    transition: opacity 1.4s ease;
+    pointer-events: none;
+  }
+  .banner.show { opacity: 1; }
+  .banner small {
+    display: block; font-size: 11px; letter-spacing: 0.35em;
+    text-transform: uppercase; color: rgba(255,255,255,0.55);
+    margin-top: 14px; font-family: 'JetBrains Mono', monospace; font-style: normal;
+  }
+ 
+  /* whispers — fade in/out like part of the smoke */
+  .whisper {
+    position: absolute; top: 34%; left: 50%;
+    transform: translate(-50%, -50%);
+    font-family: 'Instrument Serif', serif; font-style: italic;
+    font-size: 22px; letter-spacing: 0.04em;
+    color: rgba(245, 245, 250, 0.72);
+    text-shadow:
+      0 0 24px rgba(180, 200, 230, 0.22),
+      0 2px 10px rgba(0, 0, 0, 0.7);
+    opacity: 0;
+    transition: opacity 2.2s cubic-bezier(0.3, 0, 0.2, 1);
+    pointer-events: none; user-select: none;
+    white-space: nowrap;
+  }
+  .whisper.show { opacity: 1; }
+ 
+  /* grain overlay — very subtle */
+  .grain {
+    position: fixed; inset: 0; pointer-events: none; opacity: 0.035;
+    mix-blend-mode: overlay;
+    background-image:
+      radial-gradient(rgba(255,255,255,0.9) 1px, transparent 1px),
+      radial-gradient(rgba(255,255,255,0.7) 1px, transparent 1px);
+    background-size: 3px 3px, 5px 5px;
+    background-position: 0 0, 1px 2px;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="grain"></div>
+<div class="hud">
+  <div class="meter-wrap" id="meterWrap">
+    <div class="meter-label" id="meterLabel">resonance</div>
+    <div class="meter"><div class="meter-fill" id="meterFill"></div></div>
+  </div>
+  <div class="title">mirrorbound</div>
+  <div class="subtitle">find the resonance</div>
+  <div class="controls">
+    <div><b>← ↓ ↑ →</b> &nbsp; move</div>
+    <div class="r"><b>R</b> &nbsp; reset</div>
+  </div>
+  <div class="banner" id="banner">
+    reality restored
+    <small>press R to drift again</small>
+  </div>
+  <div class="whisper" id="whisper"></div>
+</div>
+ 
+<script>
+(() => {
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+  const meterWrap = document.getElementById('meterWrap');
+  const meterFill = document.getElementById('meterFill');
+  const meterLabel = document.getElementById('meterLabel');
+  const banner = document.getElementById('banner');
+  const whisper = document.getElementById('whisper');
+ 
+  // -------------------- sizing --------------------
+  let W = 0, H = 0, DPR = 1;
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = canvas.clientWidth;
+    H = canvas.clientHeight;
+    canvas.width = Math.floor(W * DPR);
+    canvas.height = Math.floor(H * DPR);
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+ 
+  // -------------------- noise (value noise, 2D) --------------------
+  const perm = new Uint8Array(512);
+  (function seed() {
+    const a = new Uint8Array(256);
+    for (let i = 0; i < 256; i++) a[i] = i;
+    for (let i = 255; i > 0; i--) {
+      const j = (Math.random() * (i + 1)) | 0;
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    for (let i = 0; i < 512; i++) perm[i] = a[i & 255];
+  })();
+  const fade = t => t * t * t * (t * (t * 6 - 15) + 10);
+  const lerp = (a, b, t) => a + (b - a) * t;
+  function noise2(x, y) {
+    const xi = Math.floor(x) & 255, yi = Math.floor(y) & 255;
+    const xf = x - Math.floor(x), yf = y - Math.floor(y);
+    const u = fade(xf), v = fade(yf);
+    const aa = perm[perm[xi] + yi] / 255;
+    const ab = perm[perm[xi] + yi + 1] / 255;
+    const ba = perm[perm[xi + 1] + yi] / 255;
+    const bb = perm[perm[xi + 1] + yi + 1] / 255;
+    return lerp(lerp(aa, ba, u), lerp(ab, bb, u), v) * 2 - 1;
+  }
+ 
+  // -------------------- state --------------------
+  const keys = { ArrowUp:false, ArrowDown:false, ArrowLeft:false, ArrowRight:false };
+  let state;
+  function initState() {
+    state = {
+      emitterL: { x: W * 0.25, y: H * 0.5, vx: 0, vy: 0 },
+      emitterR: { x: W * 0.75, y: H * 0.5, vx: 0, vy: 0 },
+      particles: [],
+      resonance: 0,       // 0..1
+      restored: false,
+      restoreT: 0,        // 0..1 animation of restoration
+      bloom: 0,           // 0..1 central bloom pulse at trigger
+      tick: 0,
+      bannerShown: false,
+      hasMoved: false,
+      restoreTick: 0,
+      whisper: { current: null, lastChange: -999 }
+    };
+    banner.classList.remove('show');
+    if (whisper) { whisper.classList.remove('show'); whisper.textContent = ''; }
+  }
+  initState();
+ 
+  // -------------------- audio --------------------
+  const Audio = {
+    ctx: null, started: false, master: null,
+    drone: null, res: null, chord: [],
+    phase: 'pre',
+    ambientTimer: null, ambientIdx: 0,
+    pulseTimer: null, lastPulseTime: 0, lastResonance: 0,
+    melodyTimer: null,
+ 
+    start() {
+      if (this.started) return;
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      this.ctx = new AC();
+      this.started = true;
+ 
+      this.master = this.ctx.createGain();
+      this.master.gain.value = 0;
+      this.master.connect(this.ctx.destination);
+      this.master.gain.linearRampToValueAtTime(0.55, this.ctx.currentTime + 2.8);
+ 
+      this._drone();
+      this._resonance();
+      this._startAmbient();
+      this._startPulse();
+    },
+ 
+    _drone() {
+      // Low foundation: A1 + E2 through a lowpass with breathing LFO
+      const a = this.ctx.createOscillator();
+      const b = this.ctx.createOscillator();
+      a.type = 'sine'; a.frequency.value = 55;
+      b.type = 'sine'; b.frequency.value = 82.41;
+      const g = this.ctx.createGain(); g.gain.value = 0.22;
+      const lp = this.ctx.createBiquadFilter();
+      lp.type = 'lowpass'; lp.frequency.value = 520; lp.Q.value = 0.6;
+      a.connect(g); b.connect(g); g.connect(lp); lp.connect(this.master);
+      a.start(); b.start();
+ 
+      const lfo = this.ctx.createOscillator();
+      const lfoGain = this.ctx.createGain();
+      lfo.type = 'sine'; lfo.frequency.value = 0.08;
+      lfoGain.gain.value = 160;
+      lfo.connect(lfoGain); lfoGain.connect(lp.frequency);
+      lfo.start();
+      this.drone = { a, b, g, lp, lfo };
+    },
+ 
+    _resonance() {
+      const osc = this.ctx.createOscillator();
+      osc.type = 'triangle';
+      osc.frequency.value = 220;
+      const g = this.ctx.createGain(); g.gain.value = 0;
+      const lp = this.ctx.createBiquadFilter();
+      lp.type = 'lowpass'; lp.frequency.value = 600;
+      osc.connect(g); g.connect(lp); lp.connect(this.master);
+      osc.start();
+      this.res = { osc, g, lp };
+    },
+ 
+    // Sparse Am7 arpeggio underneath while disconnected
+    _startAmbient() {
+      const notes = [220, 261.63, 329.63, 392]; // A3, C4, E4, G4
+      const step = () => {
+        if (!this.started) return;
+        if (this.phase === 'pre') {
+          this._playAmbientNote(notes[this.ambientIdx % notes.length]);
+          this.ambientIdx++;
+        }
+      };
+      step();
+      this.ambientTimer = setInterval(step, 2600);
+    },
+ 
+    _playAmbientNote(freq) {
+      const t = this.ctx.currentTime;
+      const o = this.ctx.createOscillator();
+      o.type = 'sine'; o.frequency.value = freq;
+      const g = this.ctx.createGain();
+      const lp = this.ctx.createBiquadFilter();
+      lp.type = 'lowpass'; lp.frequency.value = 1400;
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(0.045, t + 1.2);
+      g.gain.linearRampToValueAtTime(0, t + 4.8);
+      o.connect(g); g.connect(lp); lp.connect(this.master);
+      o.start(t); o.stop(t + 5);
+    },
+ 
+    // Sub-bass pulse pre-sync; steady grounding heartbeat post-sync
+    _startPulse() {
+      this.pulseTimer = setInterval(() => {
+        if (!this.started) return;
+        const now = performance.now();
+        if (this.phase === 'pre') {
+          const r = this.lastResonance;
+          if (r < 0.04) return;
+          const interval = lerp(1700, 360, r);
+          if (now - this.lastPulseTime < interval) return;
+          this.lastPulseTime = now;
+          this._pulse(r);
+        } else {
+          // Post-restoration: the body is still here — slow, steady anchor
+          if (now - this.lastPulseTime < 1500) return;
+          this.lastPulseTime = now;
+          this._heartbeat();
+        }
+      }, 50);
+    },
+ 
+    _pulse(r) {
+      const t = this.ctx.currentTime;
+      const o = this.ctx.createOscillator();
+      o.type = 'sine'; o.frequency.value = 38;     // sub-bass, felt not heard
+      const g = this.ctx.createGain();
+      const peak = 0.07 + r * 0.16;
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(peak, t + 0.035);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
+      o.connect(g); g.connect(this.master);
+      o.start(t); o.stop(t + 0.4);
+    },
+ 
+    // Slower, warmer pulse after restoration — a body-anchor, not a tension marker
+    _heartbeat() {
+      const t = this.ctx.currentTime;
+      const o = this.ctx.createOscillator();
+      o.type = 'sine'; o.frequency.value = 44;
+      const g = this.ctx.createGain();
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(0.08, t + 0.06);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.55);
+      o.connect(g); g.connect(this.master);
+      o.start(t); o.stop(t + 0.6);
+    },
+ 
+    setResonance(r) {
+      this.lastResonance = r;
+      if (!this.started) return;
+      const t = this.ctx.currentTime;
+      const targetVol = Math.pow(r, 1.3) * 0.11;
+      this.res.g.gain.setTargetAtTime(targetVol, t, 0.22);
+      this.res.osc.frequency.setTargetAtTime(220 + r * 109.63, t, 0.3);
+      this.res.lp.frequency.setTargetAtTime(600 + r * 2600, t, 0.35);
+    },
+ 
+    playRestoration() {
+      if (!this.started) return;
+      this.phase = 'post';
+      const t = this.ctx.currentTime;
+      // A major, staggered: A3, C#4, E4, A4
+      [220, 277.18, 329.63, 440].forEach((freq, i) => {
+        const o = this.ctx.createOscillator();
+        o.type = i === 0 ? 'sine' : 'triangle';
+        o.frequency.value = freq;
+        const g = this.ctx.createGain();
+        const peak = 0.1 - i * 0.018;
+        g.gain.setValueAtTime(0, t);
+        g.gain.linearRampToValueAtTime(peak, t + 0.9 + i * 0.22);
+        g.gain.linearRampToValueAtTime(peak * 0.55, t + 6);
+        g.gain.linearRampToValueAtTime(peak * 0.35, t + 14);
+        o.connect(g); g.connect(this.master);
+        o.start(t); o.stop(t + 30);
+        this.chord.push({ o, g });
+      });
+      this.res.g.gain.setTargetAtTime(0, t, 0.8);
+      // The drone's breath quickens toward resting breath rate (~4.5s per cycle)
+      if (this.drone && this.drone.lfo) {
+        this.drone.lfo.frequency.setTargetAtTime(0.22, t + 1.5, 3.5);
+      }
+      // Melodic line on top of the sustained chord
+      setTimeout(() => this._startMelody(), 3200);
+    },
+ 
+    // Sparse A-major pentatonic melody after sync
+    _startMelody() {
+      const scale = [220, 246.94, 277.18, 329.63, 369.99, 440, 554.37]; // A, B, C#, E, F#, A, C#
+      let lastIdx = -1;
+      const step = () => {
+        if (!this.started || this.phase !== 'post') return;
+        // pick a note not identical to the last
+        let idx;
+        do { idx = (Math.random() * scale.length) | 0; } while (idx === lastIdx);
+        lastIdx = idx;
+        this._playMelodyNote(scale[idx]);
+      };
+      step();
+      this.melodyTimer = setInterval(step, 2200);
+    },
+ 
+    _playMelodyNote(freq) {
+      const t = this.ctx.currentTime;
+      const o = this.ctx.createOscillator();
+      o.type = 'sine'; o.frequency.value = freq;
+      const g = this.ctx.createGain();
+      const lp = this.ctx.createBiquadFilter();
+      lp.type = 'lowpass'; lp.frequency.value = 2400;
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(0.055, t + 0.9);
+      g.gain.linearRampToValueAtTime(0.02, t + 2.8);
+      g.gain.linearRampToValueAtTime(0, t + 5);
+      o.connect(g); g.connect(lp); lp.connect(this.master);
+      o.start(t); o.stop(t + 5.5);
+    },
+ 
+    reset() {
+      if (!this.started) return;
+      const t = this.ctx.currentTime;
+      // Silence any sustained chord voices
+      this.chord.forEach(({ g }) => g.gain.setTargetAtTime(0, t, 0.5));
+      this.chord = [];
+      if (this.melodyTimer) { clearInterval(this.melodyTimer); this.melodyTimer = null; }
+      this.phase = 'pre';
+      this.lastResonance = 0;
+      this.ambientIdx = 0;
+      // Return the drone's breath to its slower, unresolved rhythm
+      if (this.drone && this.drone.lfo) {
+        this.drone.lfo.frequency.setTargetAtTime(0.08, t, 2.5);
+      }
+    }
+  };
+ 
+  // -------------------- input --------------------
+  window.addEventListener('keydown', (e) => {
+    Audio.start();
+    if (e.key in keys) {
+      keys[e.key] = true;
+      e.preventDefault();
+      if (state) state.hasMoved = true;
+    }
+    if (e.key === 'r' || e.key === 'R') { initState(); Audio.reset(); }
+  });
+  window.addEventListener('keyup', (e) => {
+    if (e.key in keys) keys[e.key] = false;
+  });
+  window.addEventListener('click', () => Audio.start());
+  window.addEventListener('blur', () => {
+    for (const k in keys) keys[k] = false;
+  });
+ 
+  // -------------------- particle --------------------
+  const MAX_PARTICLES = 700;
+  function spawn(emitter, side) {
+    if (state.particles.length >= MAX_PARTICLES) return;
+    const heavy = side === 'L';
+    // Left: tight cone, slow, heavy, dim. Right: wide cone, brisk, buoyant, vivid.
+    const angleSpread = heavy ? 0.25 : 0.55;
+    const angle = -Math.PI / 2 + (Math.random() - 0.5) * angleSpread;
+    const speed = heavy
+      ? 0.1 + Math.random() * 0.25
+      : 0.35 + Math.random() * 0.7;
+    const vyBoost = heavy ? -0.1 : -0.4;
+    const r0 = heavy ? 3.5 + Math.random() * 3 : 5 + Math.random() * 4;
+    const rGrow = heavy ? 0.12 + Math.random() * 0.15 : 0.25 + Math.random() * 0.28;
+    const maxLife = heavy ? 220 + Math.random() * 140 : 180 + Math.random() * 140;
+    const baseHue = side === 'R'
+      ? 200 + (emitter.y / H) * 180 + (Math.random() - 0.5) * 40
+      : 0;
+ 
+    // Sparkle chance: rare on drained side, rarer-than-before on vivid side
+    const restoreBonus = state.restoreT * 0.012;
+    const sparkleChance = heavy
+      ? 0.005 + restoreBonus       // ~1 in 200 on the drained side
+      : 0.018 + restoreBonus;      // ~1 in 55 on the vivid side
+    const isSparkle = Math.random() < sparkleChance;
+ 
+    state.particles.push({
+      x: emitter.x + (Math.random() - 0.5) * (heavy ? 3 : 6),
+      y: emitter.y + (Math.random() - 0.5) * (heavy ? 3 : 6),
+      vx: Math.cos(angle) * speed + emitter.vx * (heavy ? 0.4 : 0.22),
+      vy: Math.sin(angle) * speed + vyBoost + emitter.vy * (heavy ? 0.4 : 0.22),
+      life: 0, maxLife,
+      r0, rGrow,
+      seed: Math.random() * 1000,
+      side,
+      heavy,
+      hue: baseHue,
+      tint: heavy ? 140 + Math.random() * 70 : 205 + Math.random() * 25,
+      sparkle: isSparkle,
+      // firefly params — pre-rolled so each orb has character
+      twinkleRate: 0.025 + Math.random() * 0.04,
+      twinklePhase: Math.random() * Math.PI * 2,
+      coreSize: 0.8 + Math.random() * 1.4,
+      glowSize: 7 + Math.random() * 6
+    });
+  }
+ 
+  // -------------------- update --------------------
+  function updateEmitters() {
+    const t = state.restoreT;
+    // Left is sluggish pre-restoration, lerps to effortless as reality returns
+    const accL  = lerp(0.22, 0.42, t);
+    const dampL = lerp(0.80, 0.92, t);
+    // Right is controlled, moderate speed (not gliding)
+    const accR  = 0.38;
+    const dampR = 0.92;
+ 
+    // Left emitter: direct controls, but heavy
+    if (keys.ArrowLeft)  state.emitterL.vx -= accL;
+    if (keys.ArrowRight) state.emitterL.vx += accL;
+    if (keys.ArrowUp)    state.emitterL.vy -= accL;
+    if (keys.ArrowDown)  state.emitterL.vy += accL;
+ 
+    // Wanderlust: the drained side drifts, more insistently than before
+    const driftAmp = (1 - t) * 0.18;
+    state.emitterL.vx += noise2(state.tick * 0.014, 17) * driftAmp;
+    state.emitterL.vy += noise2(31, state.tick * 0.014) * driftAmp;
+ 
+    // Right emitter: horizontal mirrored pre-restoration
+    const mirror = 1 - t;
+    const hSign  = 1 - 2 * mirror;
+    if (keys.ArrowLeft)  state.emitterR.vx -= accR * hSign;
+    if (keys.ArrowRight) state.emitterR.vx += accR * hSign;
+    if (keys.ArrowUp)    state.emitterR.vy -= accR;
+    if (keys.ArrowDown)  state.emitterR.vy += accR;
+ 
+    state.emitterL.vx *= dampL; state.emitterL.vy *= dampL;
+    state.emitterR.vx *= dampR; state.emitterR.vy *= dampR;
+    state.emitterL.x += state.emitterL.vx;
+    state.emitterL.y += state.emitterL.vy;
+    state.emitterR.x += state.emitterR.vx;
+    state.emitterR.y += state.emitterR.vy;
+ 
+    // boundaries
+    const pad = 34;
+    const cx = W / 2;
+    if (!state.restored) {
+      state.emitterL.x = Math.max(pad, Math.min(cx - 12, state.emitterL.x));
+      state.emitterR.x = Math.max(cx + 12, Math.min(W - pad, state.emitterR.x));
+    } else {
+      state.emitterL.x = Math.max(pad, Math.min(W - pad, state.emitterL.x));
+      state.emitterR.x = Math.max(pad, Math.min(W - pad, state.emitterR.x));
+    }
+    state.emitterL.y = Math.max(pad, Math.min(H - pad, state.emitterL.y));
+    state.emitterR.y = Math.max(pad, Math.min(H - pad, state.emitterR.y));
+  }
+ 
+  function updateResonance() {
+    if (state.restored) {
+      state.restoreT = Math.min(1, state.restoreT + 0.012);
+      state.bloom *= 0.96;
+      return;
+    }
+    const cx = W / 2;
+    const distL = cx - state.emitterL.x;
+    const distR = state.emitterR.x - cx;
+    const nearCenter = distL < 110 && distR < 110;
+    const similarY = Math.abs(state.emitterL.y - state.emitterR.y) < 45;
+    const speedSum = Math.abs(state.emitterL.vx) + Math.abs(state.emitterL.vy)
+                   + Math.abs(state.emitterR.vx) + Math.abs(state.emitterR.vy);
+    const slow = speedSum < 1.3;
+ 
+    if (nearCenter && similarY && slow) {
+      state.resonance = Math.min(1, state.resonance + 0.0045);
+    } else {
+      state.resonance *= 0.955;
+    }
+ 
+    if (state.resonance >= 1 && !state.restored) {
+      state.restored = true;
+      state.restoreTick = state.tick;
+      state.bloom = 1;
+      meterLabel.textContent = 'restored';
+      Audio.playRestoration();
+      setTimeout(() => {
+        banner.classList.add('show');
+        setTimeout(() => banner.classList.remove('show'), 2800);
+      }, 400);
+    }
+  }
+ 
+  function updateParticles() {
+    // spawn from both emitters continuously
+    spawn(state.emitterL, 'L');
+    spawn(state.emitterL, 'L');
+    spawn(state.emitterR, 'R');
+    spawn(state.emitterR, 'R');
+ 
+    const t = state.tick;
+    for (let i = state.particles.length - 1; i >= 0; i--) {
+      const p = state.particles[i];
+      const isHeavy = p.heavy && state.restoreT < 0.5;
+      const nx = noise2((p.x + p.seed) * 0.004, (p.y - t * 0.6) * 0.004);
+      const ny = noise2((p.x - p.seed) * 0.004 + 100, (p.y + t * 0.6) * 0.004 + 100);
+      p.vx += nx * (isHeavy ? 0.04 : 0.07);
+      p.vy += ny * 0.04 + (isHeavy ? -0.008 : -0.026);
+      p.vx *= isHeavy ? 0.972 : 0.985;
+      p.vy *= isHeavy ? 0.975 : 0.99;
+      p.x += p.vx;
+      p.y += p.vy;
+      p.life++;
+      if (p.life >= p.maxLife || p.y < -60) state.particles.splice(i, 1);
+    }
+  }
+ 
+  // -------------------- render --------------------
+  function drawBackground() {
+    // two-tone atmosphere that blends toward unity during restoration
+    const t = state.restoreT;
+    const cx = W / 2;
+ 
+    // left half — strictly grayscale
+    const gL = ctx.createLinearGradient(0, 0, 0, H);
+    gL.addColorStop(0, `rgb(${lerp(9, 14, t)}, ${lerp(9, 11, t)}, ${lerp(10, 14, t)})`);
+    gL.addColorStop(1, `rgb(${lerp(3, 8, t)}, ${lerp(3, 6, t)}, ${lerp(3, 9, t)})`);
+    ctx.fillStyle = gL;
+    ctx.fillRect(0, 0, cx, H);
+ 
+    // right half — deep ink blue
+    const gR = ctx.createLinearGradient(0, 0, 0, H);
+    gR.addColorStop(0, `rgb(${lerp(13, 14, t)}, ${lerp(11, 11, t)}, ${lerp(28, 14, t)})`);
+    gR.addColorStop(1, `rgb(${lerp(5, 8, t)}, ${lerp(4, 6, t)}, ${lerp(18, 9, t)})`);
+    ctx.fillStyle = gR;
+    ctx.fillRect(cx, 0, W - cx, H);
+ 
+    // trail fade — this is the volumetric secret
+    ctx.fillStyle = `rgba(${lerp(8, 10, t)},${lerp(8, 8, t)},${lerp(11, 10, t)},0.09)`;
+    ctx.fillRect(0, 0, W, H);
+  }
+ 
+  function drawCenterLine() {
+    const cx = W / 2;
+    const glow = Math.max(state.resonance, state.bloom);
+    const alpha = 0.05 + glow * 0.45 * (1 - state.restoreT * 0.7);
+    if (alpha < 0.01) return;
+    const width = 1 + glow * 140 * (1 - state.restoreT * 0.5);
+    const g = ctx.createLinearGradient(cx - width, 0, cx + width, 0);
+    g.addColorStop(0, 'rgba(255,200,160,0)');
+    g.addColorStop(0.5, `rgba(255,230,200,${alpha})`);
+    g.addColorStop(1, 'rgba(255,200,160,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(cx - width, 0, width * 2, H);
+  }
+ 
+  function drawParticle(p) {
+    if (p.sparkle) { drawSparkle(p); return; }
+ 
+    const lifeT = p.life / p.maxLife;
+    let a = Math.sin(lifeT * Math.PI) * 0.38;
+    const r = p.r0 + p.life * p.rGrow;
+ 
+    // Contain each side's smoke — feather alpha as it approaches the center line,
+    // and skip entirely if it has crossed. Fades out as reality is restored.
+    const containStrength = 1 - Math.min(1, state.restoreT * 2);
+    if (containStrength > 0.01) {
+      const cx = W / 2;
+      const dNear = p.side === 'L' ? (cx - p.x) : (p.x - cx);
+      if (dNear <= 0) return;
+      const feather = 55;
+      if (dNear < feather) {
+        const mask = dNear / feather;
+        a *= (1 - containStrength) + containStrength * mask;
+      }
+    }
+    if (a <= 0.001) return;
+ 
+    // grayscale-to-color interpolation for left side during restoration
+    let h, s, l;
+    if (p.side === 'R') {
+      h = p.hue; s = 82; l = 64;
+    } else {
+      // lerp from gray → hue derived from position as color returns
+      const targetHue = 20 + (p.y / H) * 160 + (p.seed % 40);
+      h = targetHue;
+      s = 78 * state.restoreT;
+      l = lerp(p.tint / 255 * 100, 62, state.restoreT);
+    }
+ 
+    const color = (alpha) => `hsla(${h}, ${s}%, ${l}%, ${alpha})`;
+ 
+    const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, r);
+    g.addColorStop(0,   color(a));
+    g.addColorStop(0.5, color(a * 0.5));
+    g.addColorStop(1,   color(0));
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+ 
+  function drawSparkle(p) {
+    const lifeT = p.life / p.maxLife;
+    // Containment: fireflies on drained side respect the divider too
+    const containStrength = 1 - Math.min(1, state.restoreT * 2);
+    let containMask = 1;
+    if (containStrength > 0.01) {
+      const cx = W / 2;
+      const dNear = p.side === 'L' ? (cx - p.x) : (p.x - cx);
+      if (dNear <= 0) return;
+      const feather = 55;
+      if (dNear < feather) {
+        containMask = (1 - containStrength) + containStrength * (dNear / feather);
+      }
+    }
+ 
+    // Gentle pulse — fireflies hover, not shimmer
+    const envelope = Math.sin(lifeT * Math.PI);
+    const twinkle = 0.55 + 0.45 * Math.sin(p.life * p.twinkleRate + p.twinklePhase);
+    const a = envelope * twinkle * 0.9 * containMask;
+    if (a <= 0.01) return;
+ 
+    // Color: left side stays cool-white, right is saturated, lerps together on sync
+    let h, s, l;
+    if (p.side === 'R') {
+      h = p.hue; s = 70; l = 78;
+    } else {
+      const targetHue = 45 + (p.y / H) * 50;
+      h = targetHue;
+      s = 30 + 55 * state.restoreT;
+      l = 82;
+    }
+    const color = (alpha) => `hsla(${h}, ${s}%, ${l}%, ${alpha})`;
+ 
+    // Additive blend — the orb genuinely glows instead of sitting on top
+    const prevComp = ctx.globalCompositeOperation;
+    ctx.globalCompositeOperation = 'lighter';
+ 
+    // 1. Outer diffuse glow — the soft halo that gives it presence
+    const outerR = p.glowSize * (0.9 + 0.2 * twinkle);
+    const outer = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, outerR);
+    outer.addColorStop(0,   color(a * 0.45));
+    outer.addColorStop(0.5, color(a * 0.18));
+    outer.addColorStop(1,   color(0));
+    ctx.fillStyle = outer;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, outerR, 0, Math.PI * 2);
+    ctx.fill();
+ 
+    // 2. Inner bright glow — tighter, more saturated
+    const innerR = p.coreSize * 3.5;
+    const inner = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, innerR);
+    inner.addColorStop(0, color(a * 0.85));
+    inner.addColorStop(1, color(0));
+    ctx.fillStyle = inner;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, innerR, 0, Math.PI * 2);
+    ctx.fill();
+ 
+    // 3. Hot core — tiny, nearly white, the "filament"
+    ctx.fillStyle = `hsla(${h}, ${s * 0.35}%, 97%, ${a})`;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.coreSize, 0, Math.PI * 2);
+    ctx.fill();
+ 
+    ctx.globalCompositeOperation = prevComp;
+  }
+ 
+  function drawEmitter(em, side) {
+    const r = 5;
+    let color;
+    if (side === 'L') {
+      const l = lerp(88, 62, state.restoreT);
+      const s = 68 * state.restoreT;
+      color = `hsla(30, ${s}%, ${l}%, 0.9)`;
+    } else {
+      color = `hsla(${(em.y / H) * 180 + 200}, 70%, 70%, 0.9)`;
+    }
+    const g = ctx.createRadialGradient(em.x, em.y, 0, em.x, em.y, r * 4);
+    g.addColorStop(0, color);
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(em.x, em.y, r * 4, 0, Math.PI * 2);
+    ctx.fill();
+ 
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(em.x, em.y, r * 0.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+ 
+  function drawBloom() {
+    if (state.bloom < 0.01) return;
+    const cx = W / 2, cy = H / 2;
+    const maxR = Math.hypot(W, H);
+    const r = maxR * (1 - state.bloom) * 1.2;
+    const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+    g.addColorStop(0, `rgba(255,230,200,${0.35 * state.bloom})`);
+    g.addColorStop(0.4, `rgba(255,180,180,${0.18 * state.bloom})`);
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+  }
+ 
+  function drawVignette() {
+    const g = ctx.createRadialGradient(W/2, H/2, Math.min(W,H) * 0.35, W/2, H/2, Math.max(W,H) * 0.75);
+    g.addColorStop(0, 'rgba(0,0,0,0)');
+    g.addColorStop(1, 'rgba(0,0,0,0.55)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+  }
+ 
+  function updateHUD() {
+    if (state.resonance > 0.01 || state.restored) meterWrap.classList.add('on');
+    else meterWrap.classList.remove('on');
+    const pct = (state.restored ? 1 : state.resonance) * 100;
+    meterFill.style.width = pct + '%';
+  }
+ 
+  // -------------------- whispers --------------------
+  function chooseWhisper() {
+    if (state.restored) {
+      // A single whisper marking arrival — "here" fades in once, stays briefly
+      const dt = state.tick - state.restoreTick;
+      if (dt > 150 && dt < 600) return 'here';
+      return null;
+    }
+    if (!state.hasMoved) return 'find the center';
+ 
+    const cx = W / 2;
+    const distL = cx - state.emitterL.x;
+    const distR = state.emitterR.x - cx;
+    const dy = Math.abs(state.emitterL.y - state.emitterR.y);
+    const speedSum = Math.abs(state.emitterL.vx) + Math.abs(state.emitterL.vy)
+                   + Math.abs(state.emitterR.vx) + Math.abs(state.emitterR.vy);
+ 
+    const closeX = distL < 200 && distR < 200;
+    if (!closeX) return null;
+    if (dy > 70) return 'align';
+    if (speedSum > 1.6) return 'softly';
+    return 'hold';
+  }
+ 
+  function setWhisper(text) {
+    if (!text) { whisper.classList.remove('show'); return; }
+    // fade out old, swap text, fade in
+    whisper.classList.remove('show');
+    setTimeout(() => {
+      if (state.whisper.current === text) {
+        whisper.textContent = text;
+        whisper.classList.add('show');
+      }
+    }, 420);
+  }
+ 
+  function updateWhisper() {
+    if (state.tick % 15 !== 0) return;    // check 4x/sec
+    const desired = chooseWhisper();
+    if (desired === state.whisper.current) return;
+    if (state.tick - state.whisper.lastChange < 150) return; // 2.5s minimum between changes
+    state.whisper.current = desired;
+    state.whisper.lastChange = state.tick;
+    setWhisper(desired);
+  }
+ 
+  // -------------------- loop --------------------
+  function frame() {
+    state.tick++;
+    updateEmitters();
+    updateResonance();
+    updateParticles();
+    Audio.setResonance(state.resonance);
+    updateWhisper();
+ 
+    drawBackground();
+    drawCenterLine();
+    // Two passes: smoke first so sparkles can glow on top of it with additive blend
+    for (const p of state.particles) if (!p.sparkle) drawParticle(p);
+    for (const p of state.particles) if (p.sparkle) drawParticle(p);
+    drawEmitter(state.emitterL, 'L');
+    drawEmitter(state.emitterR, 'R');
+    drawBloom();
+    drawVignette();
+    updateHUD();
+ 
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
