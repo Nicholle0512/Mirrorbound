@@ -5,7 +5,7 @@
 [Mirrorbound screenshot] (.Pictures/MirrorboundSS.png)
 
 ## Live Demo
-> Coming soon, deploying within 48 hours
+https://nicholle0512.github.io/Mirrorbound/
 
 ## Concept
 Mirrorbound is a metaphorical visual showing what dissociation feels like and, likewise, how it feels when you "find resonance" through grounding; all of this is explored as a game of interactive motion.
