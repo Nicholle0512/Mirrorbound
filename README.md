@@ -23,8 +23,8 @@ R - Reset
 
 ## Tech Stack
 - JavaScript
-- HTML
 - CSS
+- HTML
 
 ## Features
 - Dynamic particle system
