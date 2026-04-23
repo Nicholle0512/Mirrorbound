@@ -44,3 +44,4 @@ R - Reset
 - Introduce levels
 - Enhance responsiveness across devices
 - Experiement with more complex particle behaviors
+- Responsiveness; bring the game to mobile
